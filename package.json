@@ -1,21 +1,27 @@
 {
   "name": "scraper-test-cli",
   "version": "1.0.0",
+  "description": "CLI GUI terminal untuk auto test scraper JS dan Python",
   "type": "module",
+  "main": "app/main.js",
   "bin": {
-    "scrapertest": "./start.js"
+    "scrapertest": "app/main.js"
   },
   "scripts": {
-    "setup": "node setup.js",
-    "start": "node start.js"
+    "setup": "node setup/install.js",
+    "start": "node app/main.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.8.0",
+    "axios": "^1.13.2",
     "boxen": "^8.0.1",
     "chalk": "^5.6.2",
     "execa": "^9.6.0",
-    "figlet": "^1.9.3",
-    "fs-extra": "^11.3.1",
+    "figlet": "^1.9.4",
+    "fs-extra": "^11.3.2",
     "gradient-string": "^3.0.0",
     "ora": "^9.0.0",
     "pdfkit": "^0.17.2"
