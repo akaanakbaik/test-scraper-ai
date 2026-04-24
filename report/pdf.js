@@ -3,75 +3,131 @@ import fs from 'fs-extra'
 import path from 'path'
 import { reportsDir } from '../system/workspace.js'
 
-const clean = text => String(text || '').replace(/\s+/g, ' ').trim()
+const cleanName = value => {
+  return String(value || 'scraper-report')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
 
-const section = (doc, title, content) => {
-  doc.moveDown(1)
-  doc.fontSize(14).fillColor('#2563eb').text(title)
-  doc.moveDown(0.3)
-  doc.fontSize(10).fillColor('#111').text(content || '-', {
-    lineGap: 2
+const textValue = value => {
+  if (value === undefined || value === null || value === '') return '-'
+  if (typeof value === 'string') return value
+  return JSON.stringify(value, null, 2)
+}
+
+const addHeader = (doc, report) => {
+  const success = report.status === 'success'
+
+  doc.rect(0, 0, doc.page.width, 110).fill('#111827')
+  doc.fillColor('#ffffff').fontSize(22).text(report.title || 'Scraper Test Report', 40, 32, {
+    width: doc.page.width - 80,
+    align: 'center'
+  })
+
+  doc.fontSize(10).fillColor('#d1d5db').text(`Generated At: ${new Date().toISOString()}`, 40, 66, {
+    width: doc.page.width - 80,
+    align: 'center'
+  })
+
+  doc.roundedRect(232, 82, 130, 24, 8).fill(success ? '#16a34a' : '#dc2626')
+  doc.fillColor('#ffffff').fontSize(11).text(String(report.status || 'unknown').toUpperCase(), 232, 89, {
+    width: 130,
+    align: 'center'
+  })
+
+  doc.y = 140
+}
+
+const sectionTitle = (doc, title) => {
+  if (doc.y > 720) doc.addPage()
+  doc.moveDown(0.7)
+  doc.fillColor('#2563eb').fontSize(14).text(title)
+  doc.moveDown(0.25)
+  doc.strokeColor('#dbeafe').lineWidth(1).moveTo(40, doc.y).lineTo(555, doc.y).stroke()
+  doc.moveDown(0.45)
+}
+
+const paragraph = (doc, value) => {
+  doc.fillColor('#111827').fontSize(10).text(textValue(value), {
+    width: 515,
+    lineGap: 3,
+    align: 'left'
   })
 }
 
-const divider = doc => {
-  doc.moveDown(0.5)
-  doc.strokeColor('#e5e7eb').lineWidth(1).moveTo(40, doc.y).lineTo(550, doc.y).stroke()
+const codeBlock = (doc, value) => {
+  const text = textValue(value)
+  const lines = text.split('\n')
+  const pageBottom = 760
+
+  doc.font('Courier').fontSize(8).fillColor('#111827')
+
+  for (const line of lines) {
+    if (doc.y > pageBottom) {
+      doc.addPage()
+      doc.font('Courier').fontSize(8).fillColor('#111827')
+    }
+
+    doc.text(line || ' ', 45, doc.y, {
+      width: 505,
+      lineGap: 2
+    })
+  }
+
+  doc.font('Helvetica')
+}
+
+const section = (doc, title, value) => {
+  sectionTitle(doc, title)
+  paragraph(doc, value)
 }
 
 export const buildPdf = async report => {
   await fs.ensureDir(reportsDir)
 
-  const filePath = path.join(reportsDir, `${Date.now()}.pdf`)
+  const fileName = `${cleanName(report.title)}-${Date.now()}.pdf`
+  const filePath = path.join(reportsDir, fileName)
 
   const doc = new PDFDocument({
     margin: 40,
-    size: 'A4'
+    size: 'A4',
+    bufferPages: true
   })
 
   const stream = fs.createWriteStream(filePath)
   doc.pipe(stream)
 
-  doc.fontSize(20).fillColor('#111').text(report.title || 'Scraper Test Report', {
-    align: 'center'
-  })
+  addHeader(doc, report)
 
-  doc.moveDown(0.5)
+  section(doc, 'Summary', report.summary)
+  section(doc, 'Scraper Analysis', report.scraper_explanation)
+  section(doc, 'Output Analysis', report.output_explanation)
+  section(doc, 'Performance', report.performance)
+  section(doc, 'Dependencies', report.dependencies)
+  section(doc, 'Errors', report.errors)
 
-  doc.fontSize(10).fillColor('#666').text(`Generated: ${new Date().toLocaleString()}`, {
-    align: 'center'
-  })
+  sectionTitle(doc, 'Raw Test Output')
+  codeBlock(doc, report.raw_output || report.rawOutput || '-')
 
-  doc.moveDown(1)
+  section(doc, 'Suggestions', report.suggestions)
 
-  doc.fontSize(12).fillColor(report.status === 'success' ? '#16a34a' : '#dc2626')
-    .text(`Status: ${report.status?.toUpperCase()}`, { align: 'center' })
+  const range = doc.bufferedPageRange()
 
-  divider(doc)
-
-  section(doc, 'Summary', clean(report.summary))
-  divider(doc)
-
-  section(doc, 'Scraper Analysis', clean(report.scraper_explanation))
-  divider(doc)
-
-  section(doc, 'Output Analysis', clean(report.output_explanation))
-  divider(doc)
-
-  section(doc, 'Performance', clean(report.performance))
-  divider(doc)
-
-  section(doc, 'Dependencies', clean(report.dependencies))
-  divider(doc)
-
-  section(doc, 'Errors', clean(report.errors))
-  divider(doc)
-
-  section(doc, 'Suggestions', clean(report.suggestions))
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i)
+    doc.fontSize(8).fillColor('#6b7280').text(`Page ${i + 1} of ${range.count}`, 40, 775, {
+      width: 515,
+      align: 'center'
+    })
+  }
 
   doc.end()
 
-  await new Promise(resolve => stream.on('finish', resolve))
+  await new Promise((resolve, reject) => {
+    stream.on('finish', resolve)
+    stream.on('error', reject)
+  })
 
   return filePath
 }
