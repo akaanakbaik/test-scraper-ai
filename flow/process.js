@@ -1,6 +1,7 @@
 import ora from 'ora'
 import fs from 'fs-extra'
 import path from 'path'
+import chalk from 'chalk'
 import { generatedDir, logsDir } from '../system/workspace.js'
 import { aiGenerate } from '../lib/ai1.js'
 import { aiReport } from '../lib/ai2.js'
@@ -46,8 +47,9 @@ export const runProcess = async ({ code, source, detected }) => {
   let lastError = null
 
   while (attempts < 3) {
-    progressStart(`Menjalankan test scraper ${attempts > 0 ? `retry ${attempts}/2` : ''}`)
-    progressUpdate(10)
+    console.log('\n' + chalk.cyan.bold(`========== TEST SCRAPER OUTPUT ${attempts > 0 ? `RETRY ${attempts}/2` : 'RUN'} ==========`))
+    console.log(chalk.gray(`Command: ${ai1.run_command}`))
+    console.log(chalk.cyan.bold('================================================\n'))
 
     const start = Date.now()
     result = await runTest(ai1.run_command)
@@ -55,17 +57,21 @@ export const runProcess = async ({ code, source, detected }) => {
 
     result.time = (end - start) / 1000
     result.attempt = attempts + 1
+    result.rawOutput = [
+      result.stdout ? `STDOUT:\n${result.stdout}` : '',
+      result.stderr ? `STDERR:\n${result.stderr}` : ''
+    ].filter(Boolean).join('\n\n')
 
-    progressUpdate(100)
-    progressStop()
+    console.log('\n' + chalk.cyan.bold('=============== END TEST OUTPUT ===============\n'))
 
     debugLog(result)
 
     if (result.exitCode === 0) {
+      console.log(chalk.green.bold('Test scraper berhasil'))
       break
     }
 
-    lastError = result.stderr || result.stdout
+    lastError = result.stderr || result.stdout || result.rawOutput
 
     if (attempts < 2) {
       const retrySpinner = ora(`Mendeteksi dan memperbaiki dependency retry ${attempts + 1}/2`).start()
