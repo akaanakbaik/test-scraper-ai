@@ -14,7 +14,14 @@ export const startCli = async debug => {
 
   const body = [
     chalk.white.bold('Auto Test Scraper JS CJS / JS ESM / Python'),
-    chalk.gray('Paste kode scraper atau jalankan dengan --file scraper.js'),
+    chalk.gray('Mode stabil: buat file dulu dengan nano, lalu jalankan pakai --file'),
+    '',
+    chalk.cyan('nano scraper.js'),
+    chalk.cyan('npm start -- --file scraper.js'),
+    '',
+    chalk.cyan('nano scraper.py'),
+    chalk.cyan('npm start -- --file scraper.py'),
+    '',
     chalk.gray('Docker sandbox aktif otomatis'),
     chalk.gray('Dependency cache aktif'),
     debug ? chalk.yellow('Debug mode aktif') : chalk.gray('Gunakan --debug untuk log full')
