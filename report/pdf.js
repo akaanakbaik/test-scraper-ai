@@ -3,27 +3,26 @@ import fs from 'fs-extra'
 import path from 'path'
 import { reportsDir } from '../system/workspace.js'
 
-const cleanName = value => {
-  return String(value || 'scraper-report')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+const clean = text => String(text || '').replace(/\s+/g, ' ').trim()
+
+const section = (doc, title, content) => {
+  doc.moveDown(1)
+  doc.fontSize(14).fillColor('#2563eb').text(title)
+  doc.moveDown(0.3)
+  doc.fontSize(10).fillColor('#111').text(content || '-', {
+    lineGap: 2
+  })
 }
 
-const writeSection = (doc, title, value) => {
-  doc.moveDown(0.7)
-  doc.fontSize(14).text(title, { underline: true })
-  doc.moveDown(0.3)
-  doc.fontSize(10).text(String(value || '-'), {
-    align: 'left'
-  })
+const divider = doc => {
+  doc.moveDown(0.5)
+  doc.strokeColor('#e5e7eb').lineWidth(1).moveTo(40, doc.y).lineTo(550, doc.y).stroke()
 }
 
 export const buildPdf = async report => {
   await fs.ensureDir(reportsDir)
 
-  const fileName = `${cleanName(report.title)}-${Date.now()}.pdf`
-  const filePath = path.join(reportsDir, fileName)
+  const filePath = path.join(reportsDir, `${Date.now()}.pdf`)
 
   const doc = new PDFDocument({
     margin: 40,
@@ -33,28 +32,46 @@ export const buildPdf = async report => {
   const stream = fs.createWriteStream(filePath)
   doc.pipe(stream)
 
-  doc.fontSize(20).text(report.title || 'Scraper Test Report', {
+  doc.fontSize(20).fillColor('#111').text(report.title || 'Scraper Test Report', {
     align: 'center'
   })
 
-  doc.moveDown()
-  doc.fontSize(12).text(`Status: ${report.status || 'unknown'}`)
-  doc.text(`Generated At: ${new Date().toISOString()}`)
+  doc.moveDown(0.5)
 
-  writeSection(doc, 'Summary', report.summary)
-  writeSection(doc, 'Scraper Explanation', report.scraper_explanation)
-  writeSection(doc, 'Output Explanation', report.output_explanation)
-  writeSection(doc, 'Performance', report.performance)
-  writeSection(doc, 'Dependencies', report.dependencies)
-  writeSection(doc, 'Errors', report.errors)
-  writeSection(doc, 'Suggestions', report.suggestions)
+  doc.fontSize(10).fillColor('#666').text(`Generated: ${new Date().toLocaleString()}`, {
+    align: 'center'
+  })
+
+  doc.moveDown(1)
+
+  doc.fontSize(12).fillColor(report.status === 'success' ? '#16a34a' : '#dc2626')
+    .text(`Status: ${report.status?.toUpperCase()}`, { align: 'center' })
+
+  divider(doc)
+
+  section(doc, 'Summary', clean(report.summary))
+  divider(doc)
+
+  section(doc, 'Scraper Analysis', clean(report.scraper_explanation))
+  divider(doc)
+
+  section(doc, 'Output Analysis', clean(report.output_explanation))
+  divider(doc)
+
+  section(doc, 'Performance', clean(report.performance))
+  divider(doc)
+
+  section(doc, 'Dependencies', clean(report.dependencies))
+  divider(doc)
+
+  section(doc, 'Errors', clean(report.errors))
+  divider(doc)
+
+  section(doc, 'Suggestions', clean(report.suggestions))
 
   doc.end()
 
-  await new Promise((resolve, reject) => {
-    stream.on('finish', resolve)
-    stream.on('error', reject)
-  })
+  await new Promise(resolve => stream.on('finish', resolve))
 
   return filePath
 }
