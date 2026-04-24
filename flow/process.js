@@ -9,18 +9,22 @@ import { runTest } from '../runtime/runner.js'
 import { buildPdf } from '../report/pdf.js'
 import { uploadFile } from '../report/upload.js'
 import { cleanup } from '../system/cleanup.js'
+import { progressStart, progressUpdate, progressStop } from '../ui/progress.js'
+import { debugLog } from '../system/debug.js'
 
 export const runProcess = async ({ code, source, detected }) => {
-  const spinner = ora('Memproses scraper dengan AI').start()
+  progressStart('AI membuat test runner')
+  progressUpdate(15)
 
   const ai1 = await aiGenerate({ code, detected })
 
+  progressUpdate(100)
+  progressStop()
+
   if (!ai1 || !ai1.files || !ai1.run_command) {
-    spinner.fail('AI gagal membuat test runner')
+    console.log('AI gagal membuat test runner')
     process.exit(1)
   }
-
-  spinner.succeed('Test runner dibuat')
 
   const writeSpinner = ora('Menulis file test').start()
 
@@ -31,65 +35,84 @@ export const runProcess = async ({ code, source, detected }) => {
 
   writeSpinner.succeed('File test siap')
 
-  const depSpinner = ora('Menyiapkan dependency').start()
+  progressStart('Menyiapkan dependency')
+  progressUpdate(20)
   await ensureDependencies(ai1.dependencies || [], detected.language)
-  depSpinner.succeed('Dependency siap')
+  progressUpdate(100)
+  progressStop()
 
-  let result
+  let result = null
   let attempts = 0
   let lastError = null
 
   while (attempts < 3) {
-    const runSpinner = ora(`Menjalankan test scraper ${attempts > 0 ? `(retry ${attempts}/2)` : ''}`).start()
+    progressStart(`Menjalankan test scraper ${attempts > 0 ? `retry ${attempts}/2` : ''}`)
+    progressUpdate(10)
 
     const start = Date.now()
     result = await runTest(ai1.run_command)
     const end = Date.now()
 
     result.time = (end - start) / 1000
+    result.attempt = attempts + 1
+
+    progressUpdate(100)
+    progressStop()
+
+    debugLog(result)
 
     if (result.exitCode === 0) {
-      runSpinner.succeed('Test berhasil')
       break
     }
-
-    runSpinner.fail('Test gagal')
 
     lastError = result.stderr || result.stdout
 
     if (attempts < 2) {
-      const retrySpinner = ora('Mencoba perbaikan dependency').start()
+      const retrySpinner = ora(`Mendeteksi dan memperbaiki dependency retry ${attempts + 1}/2`).start()
       await ensureDependencies([], detected.language, lastError)
-      retrySpinner.succeed('Perbaikan selesai')
+      retrySpinner.succeed('Perbaikan dependency selesai')
     }
 
     attempts++
   }
 
   const logFile = path.join(logsDir, `log-${Date.now()}.txt`)
-  await fs.writeFile(logFile, JSON.stringify(result, null, 2))
 
-  const reportSpinner = ora('Menyusun laporan dengan AI').start()
+  await fs.writeFile(logFile, JSON.stringify({
+    source,
+    detected,
+    ai1,
+    result,
+    lastError
+  }, null, 2))
+
+  progressStart('AI menyusun laporan')
+  progressUpdate(20)
 
   const ai2 = await aiReport({
     code,
     detected,
     ai1,
-    result
+    result,
+    lastError
   })
 
-  reportSpinner.succeed('Laporan siap')
+  progressUpdate(100)
+  progressStop()
 
-  const pdfSpinner = ora('Membuat PDF').start()
+  progressStart('Membuat PDF')
+  progressUpdate(30)
   const pdfPath = await buildPdf(ai2)
-  pdfSpinner.succeed('PDF dibuat')
+  progressUpdate(100)
+  progressStop()
 
-  const uploadSpinner = ora('Upload PDF ke CDN').start()
+  progressStart('Upload PDF ke CDN')
+  progressUpdate(25)
   const url = await uploadFile(pdfPath)
-  uploadSpinner.succeed('Upload selesai')
+  progressUpdate(100)
+  progressStop()
 
-  console.log('\n')
-  console.log('Final Report:')
+  console.log('\nFinal Report:')
   console.log(url)
 
   await cleanup()
