@@ -1,55 +1,153 @@
 import { execa } from 'execa'
 import ora from 'ora'
+import fs from 'fs-extra'
+import path from 'path'
+import { nodeCacheDir, pipCacheDir } from '../system/workspace.js'
+import { isDebug } from '../system/debug.js'
 
 const run = async cmd => {
   return await execa(cmd, {
     shell: true,
-    reject: false
+    reject: false,
+    stdio: isDebug() ? 'inherit' : 'pipe'
   })
 }
 
-const installNpm = async name => {
-  await run(`npm install ${name}`)
+const normalizeName = value => {
+  return String(value || '')
+    .replace(/^@/, 'scope-')
+    .replace(/[\/\\]/g, '-')
+    .replace(/[^a-zA-Z0-9._-]/g, '')
 }
 
-const installPip = async name => {
-  await run(`pip3 install ${name}`)
+const addFromError = (list, errorLog) => {
+  const text = String(errorLog || '')
+
+  const jsPatterns = [
+    /Cannot find module ['"](.+?)['"]/g,
+    /Error \[ERR_MODULE_NOT_FOUND\].*?package ['"](.+?)['"]/g,
+    /Cannot find package ['"](.+?)['"]/g
+  ]
+
+  const pyPatterns = [
+    /No module named ['"](.+?)['"]/g,
+    /ModuleNotFoundError: No module named ['"](.+?)['"]/g
+  ]
+
+  for (const pattern of jsPatterns) {
+    for (const match of text.matchAll(pattern)) {
+      list.push({ name: match[1], version: 'latest' })
+    }
+  }
+
+  for (const pattern of pyPatterns) {
+    for (const match of text.matchAll(pattern)) {
+      list.push({ name: match[1], version: 'latest' })
+    }
+  }
+
+  return list
+}
+
+const uniqueDeps = deps => {
+  const map = new Map()
+
+  for (const dep of deps) {
+    const name = typeof dep === 'string' ? dep : dep?.name
+    const version = typeof dep === 'string' ? 'latest' : dep?.version || 'latest'
+    if (!name) continue
+    map.set(name, { name, version })
+  }
+
+  return [...map.values()]
+}
+
+const ensureNodePackageJson = async () => {
+  const pkg = path.join(nodeCacheDir, 'package.json')
+  if (await fs.pathExists(pkg)) return
+
+  await fs.writeJson(pkg, {
+    type: 'module',
+    dependencies: {}
+  }, {
+    spaces: 2
+  })
+}
+
+const installNpmCached = async dep => {
+  await ensureNodePackageJson()
+
+  const packageName = dep.version && dep.version !== 'latest' ? `${dep.name}@${dep.version}` : dep.name
+  const result = await execa('npm', ['install', packageName, '--prefix', nodeCacheDir], {
+    reject: false,
+    stdio: isDebug() ? 'inherit' : 'pipe'
+  })
+
+  return result
+}
+
+const installPipCached = async dep => {
+  const packageName = dep.version && dep.version !== 'latest' ? `${dep.name}==${dep.version}` : dep.name
+
+  const result = await execa('python3', ['-m', 'pip', 'install', packageName, '--target', pipCacheDir, '--break-system-packages'], {
+    reject: false,
+    stdio: isDebug() ? 'inherit' : 'pipe'
+  })
+
+  return result
+}
+
+const checkNpmCached = async name => {
+  const target = path.join(nodeCacheDir, 'node_modules', name)
+  return await fs.pathExists(target)
+}
+
+const checkPipCached = async name => {
+  const clean = name.split('.')[0].replace(/-/g, '_')
+  const direct = path.join(pipCacheDir, clean)
+  const alt = path.join(pipCacheDir, name)
+  return await fs.pathExists(direct) || await fs.pathExists(alt)
 }
 
 export const ensureDependencies = async (deps, lang, errorLog = '') => {
-  const list = [...deps]
+  const all = uniqueDeps(addFromError([...(deps || [])], errorLog))
 
-  if (errorLog) {
-    const match = errorLog.match(/Cannot find module '(.+?)'/)
-    if (match) list.push({ name: match[1] })
-
-    const py = errorLog.match(/No module named '(.+?)'/)
-    if (py) list.push({ name: py[1] })
-  }
-
-  for (const dep of list) {
-    const spinner = ora(`Memastikan ${dep.name}`).start()
+  for (const dep of all) {
+    const spinner = ora(`Memastikan dependency ${dep.name}`).start()
 
     if (lang === 'javascript') {
-      const check = await run(`npm list ${dep.name}`)
-      if (check.exitCode === 0) {
-        spinner.succeed(`${dep.name} sudah ada`)
+      if (await checkNpmCached(dep.name)) {
+        spinner.succeed(`${dep.name} sudah ada di cache`)
         continue
       }
 
-      await installNpm(dep.name)
-      spinner.succeed(`${dep.name} diinstall`)
+      const result = await installNpmCached(dep)
+
+      if (result.exitCode !== 0) {
+        spinner.fail(`Gagal install ${dep.name}`)
+        console.log(result.stderr || result.stdout || '')
+        process.exit(1)
+      }
+
+      spinner.succeed(`${dep.name} berhasil diinstall ke cache`)
+      continue
     }
 
     if (lang === 'python') {
-      const check = await run(`python3 -c "import ${dep.name}"`)
-      if (check.exitCode === 0) {
-        spinner.succeed(`${dep.name} sudah ada`)
+      if (await checkPipCached(dep.name)) {
+        spinner.succeed(`${dep.name} sudah ada di cache`)
         continue
       }
 
-      await installPip(dep.name)
-      spinner.succeed(`${dep.name} diinstall`)
+      const result = await installPipCached(dep)
+
+      if (result.exitCode !== 0) {
+        spinner.fail(`Gagal install ${dep.name}`)
+        console.log(result.stderr || result.stdout || '')
+        process.exit(1)
+      }
+
+      spinner.succeed(`${dep.name} berhasil diinstall ke cache`)
     }
   }
 }
