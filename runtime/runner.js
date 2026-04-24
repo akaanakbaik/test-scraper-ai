@@ -1,12 +1,37 @@
 import { execa } from 'execa'
-import { generatedDir } from '../system/workspace.js'
+import path from 'path'
+import { generatedDir, nodeCacheDir, pipCacheDir } from '../system/workspace.js'
+import { isDebug } from '../system/debug.js'
+
+const dockerCommand = command => {
+  const workspace = generatedDir
+  const nodeModules = path.join(nodeCacheDir, 'node_modules')
+  const pipPackages = pipCacheDir
+
+  return [
+    'docker run --rm',
+    `-v "${workspace}:/sandbox"`,
+    `-v "${nodeModules}:/sandbox/node_modules"`,
+    `-v "${pipPackages}:/sandbox/pip-packages"`,
+    '-w /sandbox',
+    '-e NODE_PATH=/sandbox/node_modules',
+    '-e PYTHONPATH=/sandbox/pip-packages',
+    '--network bridge',
+    '--memory 1g',
+    '--cpus 1.5',
+    'scraper-test-sandbox:latest',
+    'bash',
+    '-lc',
+    JSON.stringify(command)
+  ].join(' ')
+}
 
 export const runTest = async command => {
-  const result = await execa(command, {
+  const result = await execa(dockerCommand(command), {
     shell: true,
-    cwd: generatedDir,
     reject: false,
-    timeout: 600000
+    timeout: 900000,
+    stdio: isDebug() ? 'inherit' : 'pipe'
   })
 
   return {
