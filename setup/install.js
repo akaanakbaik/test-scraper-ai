@@ -1,4 +1,4 @@
-import { execa } from 'execa'
+import { execSync } from 'child_process'
 import chalk from 'chalk'
 import ora from 'ora'
 import { confirm } from '@inquirer/prompts'
@@ -7,20 +7,28 @@ import { mkdir } from 'fs/promises'
 
 const debug = process.argv.includes('--debug')
 
-const run = async (command, args = [], options = {}) => {
-  return await execa(command, args, {
-    shell: true,
-    stdio: options.stdio || (debug ? 'inherit' : 'pipe'),
-    reject: false
-  })
+const run = command => {
+  try {
+    execSync(command, {
+      stdio: debug ? 'inherit' : 'pipe',
+      shell: true
+    })
+    return { success: true }
+  } catch (e) {
+    return {
+      success: false,
+      error: e.message
+    }
+  }
 }
 
-const hasCommand = async command => {
-  const result = await execa(`command -v ${command}`, {
-    shell: true,
-    reject: false
-  })
-  return result.exitCode === 0
+const hasCommand = command => {
+  try {
+    execSync(`command -v ${command}`, { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
 }
 
 const versionNumber = value => {
@@ -28,128 +36,125 @@ const versionNumber = value => {
   return match ? Number(match[1]) : 0
 }
 
-const installDocker = async () => {
-  const dockerCheck = ora('Memeriksa Docker').start()
-  const dockerExists = await hasCommand('docker')
+const getNodeVersion = () => {
+  try {
+    const v = execSync('node -v').toString()
+    return v.trim()
+  } catch {
+    return null
+  }
+}
 
-  if (dockerExists) {
-    dockerCheck.succeed('Docker tersedia')
+const installDocker = async () => {
+  const spinner = ora('Memeriksa Docker').start()
+
+  if (hasCommand('docker')) {
+    spinner.succeed('Docker tersedia')
     return
   }
 
-  dockerCheck.fail('Docker tidak ditemukan')
+  spinner.fail('Docker tidak ditemukan')
 
   const allow = await confirm({
-    message: 'Docker belum tersedia. Install dan konfigurasi otomatis sekarang?',
+    message: 'Install Docker otomatis?',
     default: true
   })
 
   if (!allow) {
-    console.log(chalk.red('Setup dibatalkan karena Docker dibutuhkan untuk sandbox'))
+    console.log(chalk.red('Setup dibatalkan'))
     process.exit(1)
   }
 
-  const install = ora('Menginstall dan mengkonfigurasi Docker').start()
-  const result = await run('sudo apt update && sudo apt install -y docker.io && sudo systemctl enable docker && sudo systemctl start docker && sudo usermod -aG docker $USER')
+  const install = ora('Menginstall Docker').start()
 
-  if (result.exitCode !== 0) {
+  const res = run('apt update && apt install -y docker.io && systemctl enable docker && systemctl start docker')
+
+  if (!res.success) {
     install.fail('Install Docker gagal')
-    console.log(result.stderr || result.stdout || '')
+    console.log(res.error)
     process.exit(1)
   }
 
-  install.succeed('Docker berhasil diinstall dan dikonfigurasi')
+  install.succeed('Docker berhasil diinstall')
 }
 
 const main = async () => {
   console.clear()
   console.log(chalk.cyan.bold('\nScraper Test CLI Setup\n'))
 
-  const nodeCheck = ora('Memeriksa Node.js v20+').start()
-  const nodeResult = await execa('node -v', {
-    shell: true,
-    reject: false
-  })
-  const nodeMajor = versionNumber(nodeResult.stdout)
+  const nodeSpinner = ora('Memeriksa Node.js').start()
+  const nodeVersion = getNodeVersion()
 
-  if (nodeResult.exitCode !== 0 || nodeMajor < 20) {
-    nodeCheck.fail('Node.js v20 ke atas wajib tersedia')
-    console.log(chalk.red('\nInstall Node.js v20+ terlebih dahulu, lalu jalankan ulang npm run setup\n'))
+  if (!nodeVersion || versionNumber(nodeVersion) < 20) {
+    nodeSpinner.fail('Node.js v20+ wajib')
     process.exit(1)
   }
 
-  nodeCheck.succeed(`Node.js sesuai: ${nodeResult.stdout}`)
+  nodeSpinner.succeed(`Node OK: ${nodeVersion}`)
 
-  const npmCheck = ora('Memeriksa npm').start()
-  const npmExists = await hasCommand('npm')
+  const npmSpinner = ora('Memeriksa npm').start()
 
-  if (!npmExists) {
-    npmCheck.fail('npm tidak ditemukan')
+  if (!hasCommand('npm')) {
+    npmSpinner.fail('npm tidak ditemukan')
     process.exit(1)
   }
 
-  npmCheck.succeed('npm tersedia')
+  npmSpinner.succeed('npm tersedia')
 
-  const curlCheck = ora('Memeriksa curl').start()
-  const curlExists = await hasCommand('curl')
+  const curlSpinner = ora('Memeriksa curl').start()
 
-  if (!curlExists) {
-    curlCheck.fail('curl tidak ditemukan')
+  if (!hasCommand('curl')) {
+    curlSpinner.fail('curl tidak ada')
 
     const allow = await confirm({
-      message: 'curl belum tersedia. Install otomatis sekarang?',
+      message: 'Install curl?',
       default: true
     })
 
-    if (!allow) {
-      console.log(chalk.red('Setup dibatalkan'))
-      process.exit(1)
-    }
+    if (!allow) process.exit(1)
 
-    const installCurl = ora('Menginstall curl').start()
-    const install = await run('sudo apt update && sudo apt install -y curl')
-
-    if (install.exitCode !== 0) {
-      installCurl.fail('Install curl gagal')
-      process.exit(1)
-    }
-
-    installCurl.succeed('curl berhasil diinstall')
-  } else {
-    curlCheck.succeed('curl tersedia')
+    run('apt update && apt install -y curl')
   }
+
+  curlSpinner.succeed('curl tersedia')
 
   await installDocker()
 
-  const folderCheck = ora('Menyiapkan folder utama dan cache').start()
+  const folderSpinner = ora('Menyiapkan folder').start()
 
-  for (const dir of ['workspace', 'workspace/input', 'workspace/generated', 'workspace/logs', 'workspace/tmp', 'workspace/cache', 'workspace/cache/node', 'workspace/cache/pip', 'reports']) {
+  const dirs = [
+    'workspace',
+    'workspace/input',
+    'workspace/generated',
+    'workspace/logs',
+    'workspace/tmp',
+    'workspace/cache',
+    'workspace/cache/node',
+    'workspace/cache/pip',
+    'reports'
+  ]
+
+  for (const dir of dirs) {
     if (!existsSync(dir)) await mkdir(dir, { recursive: true })
   }
 
-  folderCheck.succeed('Folder utama dan cache siap')
+  folderSpinner.succeed('Folder siap')
 
-  const npmInstall = ora('Menginstall dependency utama tools').start()
-  const installResult = await run('npm install')
+  const installSpinner = ora('Install dependency tools').start()
 
-  if (installResult.exitCode !== 0) {
-    npmInstall.fail('npm install gagal')
-    console.log(installResult.stderr || installResult.stdout || '')
+  const res = run('npm install')
+
+  if (!res.success) {
+    installSpinner.fail('npm install gagal')
+    console.log(res.error)
     process.exit(1)
   }
 
-  npmInstall.succeed('Dependency utama tools siap')
+  installSpinner.succeed('Dependency berhasil diinstall')
 
-  console.log(chalk.green.bold('\nSetup selesai. Menjalankan tools...\n'))
+  console.log(chalk.green.bold('\nSetup selesai\n'))
 
-  await new Promise(resolve => setTimeout(resolve, 800))
-  console.clear()
-
-  const start = await run('npm start', [], { stdio: 'inherit' })
-  process.exit(start.exitCode || 0)
+  run('npm start')
 }
 
-main().catch(error => {
-  console.log(chalk.red(error.stack || error.message))
-  process.exit(1)
-})
+main()
