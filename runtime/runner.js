@@ -1,7 +1,6 @@
 import { execa } from 'execa'
 import path from 'path'
 import { generatedDir, pipCacheDir } from '../system/workspace.js'
-import { isDebug } from '../system/debug.js'
 
 const dockerCommand = command => {
   const workspace = generatedDir
@@ -28,11 +27,13 @@ export const runTest = async command => {
   const proc = execa(dockerCommand(command), {
     shell: true,
     reject: false,
-    timeout: 900000
+    timeout: 900000,
+    all: true
   })
 
   let stdout = ''
   let stderr = ''
+  let all = ''
 
   proc.stdout?.on('data', data => {
     const text = data.toString()
@@ -46,12 +47,18 @@ export const runTest = async command => {
     process.stderr.write(text)
   })
 
+  proc.all?.on('data', data => {
+    all += data.toString()
+  })
+
   const result = await proc
 
   return {
     command,
     stdout,
     stderr,
+    all,
+    rawOutput: all || [stdout, stderr].filter(Boolean).join('\n'),
     exitCode: result.exitCode ?? 1,
     failed: result.failed || false,
     timedOut: result.timedOut || false
