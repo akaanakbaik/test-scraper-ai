@@ -25,17 +25,33 @@ const dockerCommand = command => {
 }
 
 export const runTest = async command => {
-  const result = await execa(dockerCommand(command), {
+  const proc = execa(dockerCommand(command), {
     shell: true,
     reject: false,
-    timeout: 900000,
-    stdio: isDebug() ? 'inherit' : 'pipe'
+    timeout: 900000
   })
+
+  let stdout = ''
+  let stderr = ''
+
+  proc.stdout?.on('data', data => {
+    const text = data.toString()
+    stdout += text
+    process.stdout.write(text)
+  })
+
+  proc.stderr?.on('data', data => {
+    const text = data.toString()
+    stderr += text
+    process.stderr.write(text)
+  })
+
+  const result = await proc
 
   return {
     command,
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
+    stdout,
+    stderr,
     exitCode: result.exitCode ?? 1,
     failed: result.failed || false,
     timedOut: result.timedOut || false
